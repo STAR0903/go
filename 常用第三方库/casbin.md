@@ -111,6 +111,381 @@ e = r.sub == p.sub && r.obj == p.obj && r.act == p.act || r.sub == "root"
 
 只要访问主体是 `root`一律放行。
 
+# RBAC 模型
+
+`ACL`模型在用户和资源都比较少的情况下没什么问题，但是用户和资源量一大，`ACL`就会变得异常繁琐。想象一下，每次新增一个用户，都要把他需要的权限重新设置一遍是多么地痛苦。`RBAC`（role-based-access-control）模型通过引入角色（`role`）这个中间层来解决这个问题。每个用户都属于一个角色，例如开发者、管理员、运维等，每个角色都有其特定的权限，权限的增加和删除都通过角色来进行。这样新增一个用户时，我们只需要给他指派一个角色，他就能拥有该角色的所有权限。修改角色的权限时，属于这个角色的用户权限就会相应的修改。
+
+### 快速上手
+
+在 `casbin`中使用 `RBAC`模型需要在模型文件中添加 `role_definition`模块：
+
+```model.conf
+[role_definition]
+g = _, _
+
+[matchers]
+m = g(r.sub, p.sub) && r.obj == p.obj && r.act == p.act
+```
+
+`g = _,_`定义了用户——角色，角色——角色的映射关系，前者是后者的成员，拥有后者的权限。然后在匹配器中，我们不需要判断 `r.sub`与 `p.sub`完全相等，只需要使用 `g(r.sub, p.sub)`来判断请求主体 `r.sub`是否属于 `p.sub`这个角色即可。最后我们修改策略文件添加用户——角色定义：
+
+```policy.csv
+p, admin, data, read, allow
+p, admin, data, write, allow
+
+g, alice, admin
+
+
+p, user, data, read, allow
+p, user, data, write, deny
+
+g, bob, user
+```
+
+上面的 `policy.csv`文件规定了，`alice`属于 `admin`管理员，`bob`属于 `user`开发者，使用 `g`来定义这层关系。另外 `admin`对数据 `data`用 `read`和 `write`权限，而 `user`对数据 `data`只有 `read`权限。
+
+```
+package main
+
+import (
+	"fmt"
+	casbin "github.com/casbin/casbin/v2"
+)
+
+func check(e *casbin.Enforcer, sub, obj, act string) {
+	ok, err := e.Enforce(sub, obj, act)
+	if err != nil {
+		fmt.Println("Check permission failed:", err)
+	}
+	fmt.Println(sub, obj, act, ":", ok) // Output: Is alice allowed to read data1? true
+}
+
+func main() {
+	// Initialize a new Enforcer
+	e, err := casbin.NewEnforcer("model.conf", "policy.csv")
+	if err != nil {
+		fmt.Println("Initialize a new Enforcer failed:", err)
+		return
+	}
+	// Check the permission
+	check(e, "alice", "data", "read")
+	check(e, "alice", "data", "write")
+	check(e, "bob", "data", "read")
+	check(e, "bob", "data", "write")
+
+}
+
+```
+
+```
+alice data read : true
+alice data write : true
+bob data read : true
+bob data write : false
+```
+
+### 多个 `RBAC`
+
+`casbin`支持同时存在多个 `RBAC`系统，即用户和资源都有角色：
+
+```model.conf
+[role_definition]
+g=_,_
+g2=_,_
+
+[matchers]
+m = g(r.sub, p.sub) && g2(r.obj, p.obj) && r.act == p.act
+```
+
+上面的模型文件定义了两个 `RBAC`系统 `g`和 `g2`，我们在匹配器中使用 `g(r.sub, p.sub)`判断请求主体属于特定组，`g2(r.obj, p.obj)`判断请求资源属于特定组，且操作一致即可放行。
+
+策略文件:
+
+```policy.csv
+p, admin, prod, read
+p, admin, prod, write
+p, admin, dev, read
+p, admin, dev, write
+p, developer, dev, read
+p, developer, dev, write
+p, developer, prod, read
+g, dajun, admin
+g, lizi, developer
+g2, prod.data, prod
+g2, dev.data, dev
+```
+
+先看角色关系，即最后 4 行，`dajun`属于 `admin`角色，`lizi`属于 `developer`角色，`prod.data`属于生产资源 `prod`角色，`dev.data`属于开发资源 `dev`角色。`admin`角色拥有对 `prod`和 `dev`类资源的读写权限，`developer`只能拥有对 `dev`的读写权限和 `prod`的读权限。
+
+```golang
+check(e, "dajun", "prod.data", "read")
+check(e, "dajun", "prod.data", "write")
+check(e, "lizi", "dev.data", "read")
+check(e, "lizi", "dev.data", "write")
+check(e, "lizi", "prod.data", "write")
+```
+
+第一个函数中 `e.Enforce()`方法在实际执行的时候先获取 `dajun`所属角色 `admin`，再获取 `prod.data`所属角色 `prod`，根据文件中第一行 `p, admin, prod, read`允许请求。最后一个函数中 `lizi`属于角色 `developer`，而 `prod.data`属于角色 `prod`，所有策略都不允许，故该请求被拒绝：
+
+```cmd
+dajun CAN read prod.data
+dajun CAN write prod.data
+lizi CAN read dev.data
+lizi CAN write dev.data
+lizi CANNOT write prod.data
+```
+
+### 多层角色
+
+`casbin`还能为角色定义所属角色，从而实现多层角色关系，这种权限关系是可以传递的。例如 `dajun`属于高级开发者 `senior`，`seinor`属于开发者，那么 `dajun`也属于开发者，拥有开发者的所有权限。我们可以定义开发者共有的权限，然后额外为 `senior`定义一些特殊的权限。
+
+模型文件不用修改，策略文件改动如下：
+
+```policy.csv
+p, senior, data, write
+p, developer, data, read
+g, dajun, senior
+g, senior, developer
+g, lizi, developer
+```
+
+上面 `policy.csv`文件定义了高级开发者 `senior`对数据 `data`有 `write`权限，普通开发者 `developer`对数据只有 `read`权限。同时 `senior`也是 `developer`，所以 `senior`也继承其 `read`权限。`dajun`属于 `senior`，所以 `dajun`对 `data`有 `read`和 `write`权限，而 `lizi`只属于 `developer`，对数据 `data`只有 `read`权限。
+
+### `RBAC` domain
+
+在 `casbin`中，角色可以是全局的，也可以是特定 `domain`（领域）或 `tenant`（租户），可以简单理解为 **组** 。例如 `dajun`在组 `tenant1`中是管理员，拥有比较高的权限，在 `tenant2`可能只是个弟弟。
+
+使用 `RBAC domain`需要对模型文件做以下修改：
+
+```model.conf
+[request_definition]
+r = sub, dom, obj, act
+
+[policy_definition]
+p = sub, dom, obj, act
+
+[role_definition]
+g = _,_,_
+
+[matchers]
+m = g(r.sub, p.sub, r.dom) && r.dom == p.dom && r.obj == p.obj && r.act == p.obj
+```
+
+`g=_,_,_`表示前者在后者中拥有中间定义的角色，在匹配器中使用 `g`要带上 `dom`。
+
+```
+p, admin, tenant1, data1, read
+p, admin, tenant2, data2, read
+g, dajun, admin, tenant1
+g, dajun, developer, tenant2
+```
+
+在 `tenant1`中，只有 `admin`可以读取数据 `data1`。在 `tenant2`中，只有 `admin`可以读取数据 `data2`。`dajun`在 `tenant1`中是 `admin`，但是在 `tenant2`中不是。
+
+# ABAC
+
+`RBAC`模型对于实现比较规则的、相对静态的权限管理非常有用。但是对于特殊的、动态的需求，`RBAC`就显得有点力不从心了。例如，我们在不同的时间段对数据 `data`实现不同的权限控制。正常工作时间 `9:00-18:00`所有人都可以读写 `data`，其他时间只有数据所有者能读写。这种需求我们可以很方便地使用 `ABAC`（attribute base access list）模型完成：
+
+```model.conf
+[request_definition]
+r = sub, obj, act
+
+[policy_definition]
+p = sub, obj, act
+
+[matchers]
+m = r.sub.Hour >= 9 && r.sub.Hour < 18 || r.sub.Name == r.obj.Owner
+
+[policy_effect]
+e = some(where (p.eft == allow))
+```
+
+该规则不需要策略文件：
+
+```golang
+type Object struct {
+  Name  string
+  Owner string
+}
+
+type Subject struct {
+  Name string
+  Hour int
+}
+
+func check(e *casbin.Enforcer, subSubject, objObject, actstring) {
+  ok, _ := e.Enforce(sub, obj, act)
+  ifok{
+    fmt.Printf("%s CAN %s %s at %d:00\n", sub.Name, act, obj.Name, sub.Hour)
+  } else{
+    fmt.Printf("%s CANNOT %s %s at %d:00\n", sub.Name, act, obj.Name, sub.Hour)
+  }
+}
+
+func main() {
+  e, err := casbin.NewEnforcer("./model.conf")
+  if err != nil {
+    log.Fatalf("NewEnforecer failed:%v\n", err)
+  }
+
+  o := Object{"data", "dajun"}
+  s1 := Subject{"dajun", 10}
+  check(e, s1, o, "read")
+
+  s2 := Subject{"lizi", 10}
+  check(e, s2, o, "read")
+
+  s3 := Subject{"dajun", 20}
+  check(e, s3, o, "read")
+
+  s4 := Subject{"lizi", 20}
+  check(e, s4, o, "read")
+}
+```
+
+显然 `lizi`在 `20:00`不能 `read`数据 `data`：
+
+```cmd
+dajun CAN read data at 10:00
+lizi CAN read data at 10:00
+dajun CAN read data at 20:00
+lizi CANNOT read data at 20:00
+```
+
+我们知道，在 `model.conf`文件中可以通过 `r.sub`和 `r.obj`，`r.act`来访问传给 `Enforce`方法的参数。
+
+使用 `ABAC`模型可以非常灵活的权限控制，但是一般情况下 `RBAC`就已经够用了。
+
+# 优先级模型
+
+Casbin支持参考优先级加载策略。
+
+### 隐式优先级
+
+这非常简单，顺序决定了策略的优先级，策略出现的越早优先级就越高。
+
+model.conf：
+
+```ini
+[policy_effect]
+e = priority(p.eft) || deny
+Copy
+```
+
+### 显式优先级
+
+策略定义中的优先级令牌名称必须是“优先级”，**较小的优先级值将具有较高的优先级**。 如果优先级有非数字字符，它将是被排在最后，而不是导致报错。 现在，明确的优先级仅支持 `添加策略` & `添加策略`，如果 `升级策略` 被调用，那么您不应该改变优先级属性。
+
+model.conf：
+
+```ini
+[request_definition]
+r = sub, obj, act
+
+[policy_definition]
+p = priority, sub, obj, act, eft
+
+[role_definition]
+g = _, _
+
+[policy_effect]
+e = priority(p.eft) || deny
+
+[matchers]
+m = g(r.sub, p.sub) && r.obj == p.obj && r.act == p.act
+Copy
+```
+
+policy.csv
+
+```csv
+p, 10, data1_deny_group, data1, read, deny
+p, 10, data1_deny_group, data1, write, deny
+p, 10, data2_allow_group, data2, read, allow
+p, 10, data2_allow_group, data2, write, allow
+
+
+p, 1, alice, data1, write, allow
+p, 1, alice, data1, read, allow
+p, 1, bob, data2, read, deny
+
+g, bob, data2_allow_group
+g, alice, data1_deny_group
+```
+
+### 基于角色和用户层次结构优先级
+
+角色和用户的继承结构只能是多棵树，而不是图。 如果一个用户有多个角色，您必须确保用户在不同树上有相同的等级。 **如果两种角色具有相同的等级，那么出现早的策略（相应的角色）就显得更加优先**。 更多详情请看 [casbin#833](https://github.com/casbin/casbin/pull/833)、[casbin#831](https://github.com/casbin/casbin/issues/831)
+
+model.conf：
+
+```ini
+[request_definition]
+r = sub, obj, act
+
+[policy_definition]
+p = sub, obj, act, eft
+
+[role_definition]
+g = _, _
+
+[policy_effect]
+e = subjectPriority(p.eft) || deny
+
+[matchers]
+m = g(r.sub, p.sub) && r.obj == p.obj && r.act == p.act 
+```
+
+policy.csv
+
+```csv
+p, root, data1, read, deny
+p, admin, data1, read, deny
+
+p, editor, data1, read, deny
+p, subscriber, data1, read, deny
+
+p, jane, data1, read, allow
+p, alice, data1, read, allow
+
+g, admin, root
+
+g, editor, admin
+g, subscriber, admin
+
+g, jane, editor
+g, alice, subscriber 
+Copy
+```
+
+请求：
+
+```
+jane, data1, read --> true //jane在最底部,所以优先级高于editor, admin 和 root
+alice, data1, read --> true
+```
+
+像这样的角色层次结构：
+
+```
+role: root
+ └─ role: admin
+    ├─ role editor
+    │  └─ user: jane
+    │
+    └─ role: subscriber
+       └─ user: john
+```
+
+优先级类似于：
+
+```
+role: root # 自动优先级: 30
+ --role: admin# 自动优先级: 20
+     --role: editor # 自动优先级: 10
+     --role: subscriber # 自动优先级: 10
+```
+
 # Model语法
 
 ### Request定义
@@ -384,3 +759,225 @@ false <nil>
 true <nil>
 
 ```
+
+# 存储
+
+### Model存储
+
+与 policy 不同，model 只能加载，不能保存。 因为我们认为 model 不是动态组件，不应该在运行时进行修改，所以我们没有实现一个 API 来将 model 保存到存储中。
+
+但是，好消息是，我们提供了三种等效的方法来静态或动态地加载模型：
+
+##### .CONF 文件加载
+
+```
+#model.conf
+
+[request_definition]
+r = sub, obj, act
+
+[policy_definition]
+p = sub, obj, act
+
+[role_definition]
+g = _, _
+
+[policy_effect]
+e = some(where (p.eft == allow))
+
+[matchers]
+m = g(r.sub, p.sub) && r.obj == p.obj && r.act == p.act
+```
+
+##### 代码加载
+
+模型可以从代码中动态初始化，不需要使用 `.CONF`。下面是RBAC模型的一个例子：
+
+```
+package main
+
+import (
+	"fmt"
+	"github.com/casbin/casbin/v2"
+	"github.com/casbin/casbin/v2/model"
+	fileadapter "github.com/casbin/casbin/v2/persist/file-adapter"
+)
+
+func check(e *casbin.Enforcer, sub, obj, act string) {
+	ok, err := e.Enforce(sub, obj, act)
+	if err != nil {
+		fmt.Println("Check permission failed:", err)
+	}
+	fmt.Println(sub, obj, act, ":", ok) // Output: Is alice allowed to read data1? true
+}
+func main() {
+	// 从Go代码初始化模型
+	m := model.NewModel()
+	m.AddDef("r", "r", "sub, obj, act")
+	m.AddDef("p", "p", "sub, obj, act, eft")
+	m.AddDef("g", "g", "_, _")
+	m.AddDef("e", "e", "some(where (p.eft == allow))")
+	m.AddDef("m", "m", "g(r.sub, p.sub) && r.obj == p.obj && r.act == p.act")
+
+	// 从CSV文件adapter加载策略规则
+	// 使用自己的 adapter 替换,不能使用 casbin.NewEnforcer(m, "./policy.csv")
+	a := fileadapter.NewAdapter("./policy.csv")
+
+	// 创建enforcer
+	e, _ := casbin.NewEnforcer(m, a)
+	check(e, "alice", "data1", "read")
+	check(e, "alice", "data1", "write")
+	check(e, "bob", "data2", "read")
+	check(e, "bob", "data2", "write")
+}
+
+```
+
+##### 字符串加载
+
+或者您可以从多行字符串加载整个模型文本。这种方法的优点是您不需要维护模型文件。
+
+```go
+import (
+    "github.com/casbin/casbin/v2"
+    "github.com/casbin/casbin/v2/model"
+)
+
+// 从字符串初始化模型
+text :=
+`
+[request_definition]
+r = sub, obj, act
+
+[policy_definition]
+p = sub, obj, act
+
+[role_definition]
+g = _, _
+
+[policy_effect]
+e = some(where (p.eft == allow))
+
+[matchers]
+m = g(r.sub, p.sub) && r.obj == p.obj && r.act == p.act
+`
+m, _ := model.NewModelFromString(text)
+
+// 从CSV文件adapter加载策略规则
+// 使用自己的 adapter 替换
+a := fileadapter.NewAdapter("./policy.csv")
+
+// 创建执行者。
+e := casbin.NewEnforcer(m, a)
+```
+
+### Policy存储
+
+在Casbin中，策略存储作为[ 适配器 ](https://v1.casbin.org/docs/zh-CN/adapters)来实现。
+
+### CSV 文件载入
+
+`CSV` 文件示例（不常用）
+
+```
+p, alice, data1, read
+p, bob, data2, write
+p, data2_admin, data2, read
+p, data2_admin, data2, write
+g, alice, data2_admin
+Copy
+```
+
+如果你的文件包含逗号 `,` , 你应该用双引号把它包裹, 例如:
+
+```
+p, alice, "data1,data2", read --correcy
+p, alice, data1,data2, read --insur ("data1,data2" 应该是一个整体)
+```
+
+如果您的文件包含逗号 `,` 和双引号 `"`, 你应该用双引号将字段放在一起, 并将任何嵌入的双引号加倍。
+
+```
+p, alice, data, "r.act in (""get"", ""post"")" --correct
+p, alice, data, "r.act in ("get", "post")" --insur --unction (should use "" to fescape "")
+```
+
+### [适配器](https://v1.casbin.org/docs/zh-CN/adapters)API
+
+| 方法                   | 类型   | 描述                           |
+| ---------------------- | ------ | ------------------------------ |
+| LoadPolicy()           | 基本的 | 从存储中加载所有策略规则       |
+| SavePolicy()           | 基本的 | 保存所有策略规则到存储         |
+| AddPolicy()            | 可选的 | 添加策略规则到存储             |
+| RemovePolicy()         | 可选的 | 从存储中删除策略规则           |
+| RemoveFilteredPolicy() | 可选的 | 从存储中删除匹配过滤规则的策略 |
+
+### 数据库存储格式
+
+**您的策略文件**
+
+```
+p, data2_admin, data2, read
+p, data2_admin, data2, write
+g, alice, admin, admin
+```
+
+**相应的数据库结构(比如 MySQL)**
+
+| id | ptype | v0          | v1     | v2   | v3 | v4 | v5 |
+| -- | ----- | ----------- | ------ | ---- | -- | -- | -- |
+| 1  | p     | data2_admin | 数据2  | 可读 |    |    |    |
+| 2  | p     | data2_admin | 数据2  | 可写 |    |    |    |
+| 3  | g     | Alice       | 管理员 |      |    |    |    |
+
+**每一列的含义**
+
+* `id`: 只存在于数据库中作为主键。 不作为 `Casbin策略的一部分`。它生成的方式取决于特定的适配器
+* `ptype`: 它对应 `p`, `g`, `g2`, 等等。
+* `v0-v5`: 列名称没有特定的含义, 并对应 `策略csv` 中的值。 列数取决于您自己定义的数量。 理论上，可以有无限的列数。 但通常在适配器中只有 **6** 列。 如果您觉得还不够，请向相应的适配器仓库提交问题。
+
+**支持多种包/第三方库操作数据库存储，具体点击[适配器](https://v1.casbin.org/docs/zh-CN/adapters)**
+
+##### [Gorm Adapter](https://github.com/casbin/gorm-adapter?tab=readme-ov-file)
+
+```
+package main
+
+import (
+	"github.com/casbin/casbin/v2"
+	gormadapter "github.com/casbin/gorm-adapter/v3"
+	_ "github.com/go-sql-driver/mysql"
+)
+
+func main() {
+	// 初始化一个 Gorm 适配器，并将其用于 Casbin 的执行器：
+	// 适配器将使用名为 "casbin" 的 MySQL 数据库。
+	// 如果数据库不存在，适配器将自动创建它。
+	// 你也可以使用已经存在的 gorm 实例，通过 gormadapter.NewAdapterByDB(gormInstance)
+	a, _ := gormadapter.NewAdapter("mysql", "mysql_username:mysql_password@tcp(127.0.0.1:3306)/") // 你的数据库驱动和数据源。
+	e, _ := casbin.NewEnforcer("examples/rbac_model.conf", a)
+
+	// 或者你可以使用一个已存在的数据库 "abc"，像这样：
+	// 适配器将使用名为 "casbin_rule" 的表。
+	// 如果表不存在，适配器将自动创建它。
+	// a := gormadapter.NewAdapter("mysql", "mysql_username:mysql_password@tcp(127.0.0.1:3306)/abc", true)
+
+	// 从数据库加载策略。
+	e.LoadPolicy()
+
+	// 检查权限。
+	e.Enforce("alice", "data1", "read")
+
+	// 修改策略。
+	// e.AddPolicy(...)
+	// e.RemovePolicy(...)
+
+	// 将策略保存回数据库。
+	e.SavePolicy()
+}
+
+```
+
+# API
+
+如果想要了解更多方法或者函数，继续学习[API](https://v1.casbin.org/docs/zh-CN/api-overview)
