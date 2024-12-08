@@ -276,6 +276,15 @@ func InitLogger() {
 }
 ```
 
+使用 `NewTee`将 `c1`和 `c2`合并到 `core`，还可以使用切片的方式
+
+```
+var coreArr []zapcore.Core
+coreArr = append(coreArr, c1)
+coreArr = append(coreArr, c2)
+logger := zap.New(zapcore.NewTee(coreArr...), zap.AddCaller())
+```
+
 ###### 自定义的日志输出
 
 `LevelEnablerFunc` 是一个非常灵活且简便的方式，可以通过匿名函数根据日志级别来动态启用或禁用日志。它为在复杂的日志输出配置中根据级别控制日志的记录提供了非常方便的手段。
