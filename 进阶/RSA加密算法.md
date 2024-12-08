@@ -16,7 +16,7 @@ Go 提供了 `crypto/rsa` 和 `crypto/rand` 包，允许我们生成和使用 RS
 
 生成一对 RSA 密钥，并将私钥和公钥分别保存到 `private.pem` 和 `public.pem` 文件中。
 
-密钥长度建议为 2048 或 4096 位，以确保安全性。
+密钥长度建议为 2048 位或 4096 位，以确保安全性。
 
 ```
 package learn_rsa
