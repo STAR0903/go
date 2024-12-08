@@ -63,14 +63,14 @@ Viper需要最少知道在哪里查找配置文件的配置。Viper支持 `JSON`
 下面是一个如何使用Viper搜索和读取配置文件的示例。不需要任何特定的路径，但是至少应该提供一个配置文件预期出现的路径。
 
 ```
-viper.SetConfigFile("./config.yaml") // 指定配置文件路径
-viper.SetConfigName("config") // 配置文件名称(无扩展名)
-viper.SetConfigType("yaml") // 如果配置文件的名称中没有扩展名，则需要配置此项
-viper.AddConfigPath("/etc/appname/")   // 查找配置文件所在的路径
+viper.SetConfigFile("./config.yaml") 
+viper.SetConfigName("config") 
+viper.SetConfigType("yaml")
+viper.AddConfigPath("/etc/appname/")
 viper.AddConfigPath("$HOME/.appname")  // 多次调用以添加多个搜索路径
 viper.AddConfigPath(".")               // 还可以在工作目录中查找配置
-err := viper.ReadInConfig() // 查找并读取配置文件
-if err != nil { // 处理读取配置文件的错误
+err := viper.ReadInConfig() 
+if err != nil { 
 	panic(fmt.Errorf("Fatal error config file: %s \n", err))
 }
 ```
@@ -152,7 +152,7 @@ viper.SafeWriteConfigAs("/path/to/my/.other_config")
 
 需要重新启动服务器以使配置生效的日子已经一去不复返了，通过 `watchConfig`， `viper`驱动的应用程序可以在运行时读取配置文件的更新，而不会错过任何消息。
 
-可选地，你可以为Viper提供一个回调函数`（OnConfigChange）`，以便在每次发生更改时运行。
+可选地，你可以为Viper提供一个回调函数 `（OnConfigChange）`，以便在每次发生更改时运行。
 
 **确保在调用 `WatchConfig()`之前添加了所有的配置路径。**
 
@@ -554,7 +554,6 @@ app:
     max-items: 200
     item-size: 80
 ```
-
 
 执行后：
 
