@@ -109,7 +109,7 @@ func simpleHttpGet(url string) {
 
 #### 定制logger
 
-###### 日志写入文件而不是终端
+###### 日志写入文件
 
 我们要做的第一个更改是把日志写入文件，而不是打印到应用程序控制台。
 
@@ -223,7 +223,9 @@ zap.AddCallerSkip(skip int) 用于在使用 Uber 的 Zap 日志库时，跳过�
 这样可以更准确地反映出业务代码中实际产生日志的位置，方便在查看日志时快速定位到相关的业务逻辑代码。但需要注意的是，过度使用 zap.AddCallerSkip 可能会导致难以追踪日志的真正来源，所以应该谨慎使用，并确保对其效果有清晰的理解
 ```
 
-###### 将日志输出到多个位置
+#### 日志输出
+
+###### 日志输出到多个位置
 
 我们可以将日志同时输出到文件和终端
 
@@ -246,7 +248,7 @@ ws := io.MultiWriter(file, os.Stdout)
 core := zapcore.NewCore(encoder, zapcore.AddSync(ws), zapcore.DebugLevel)
 ```
 
-###### 将err日志单独输出到文件
+###### err日志单独输出
 
 有时候我们除了将全量日志输出到 `xx.log`文件中之外，还希望将 `ERROR`级别的日志单独输出到一个名为 `xx.err.log`的日志文件中。我们可以通过以下方式实现
 
@@ -272,6 +274,91 @@ func InitLogger() {
 	core := zapcore.NewTee(c1, c2)
 	logger = zap.New(core, zap.AddCaller())
 }
+```
+
+###### 自定义的日志输出
+
+`LevelEnablerFunc` 是一个非常灵活且简便的方式，可以通过匿名函数根据日志级别来动态启用或禁用日志。它为在复杂的日志输出配置中根据级别控制日志的记录提供了非常方便的手段。
+
+```
+// 日志级别
+highPriority := zap.LevelEnablerFunc(func(level zapcore.Level) bool {
+	return level >= zap.ErrorLevel
+})
+lowPriority := zap.LevelEnablerFunc(func(level zapcore.Level) bool {
+	return level < zap.ErrorLevel && level >= zap.DebugLevel
+})
+```
+
+###### 日志输出原码分析
+
+```
+#zap/zapcore/core.go
+
+// NewCore creates a Core that writes logs to a WriteSyncer.
+func NewCore(enc Encoder, ws WriteSyncer, enab LevelEnabler) Core {
+	return &ioCore{
+		LevelEnabler: enab,
+		enc:          enc,
+		out:          ws,
+	}
+}type ioCore struct {
+	LevelEnabler
+	enc Encoder
+	out WriteSyncer
+}
+```
+
+```
+#zap/zapcore/level.go
+
+// Enabled returns true if the given level is at or above this level.
+func (l Level) Enabled(lvl Level) bool {
+	return lvl >= l
+}
+
+// LevelEnabler decides whether a given logging level is enabled when logging a
+// message.
+//
+// Enablers are intended to be used to implement deterministic filters;
+// concerns like sampling are better implemented as a Core.
+//
+// Each concrete Level value implements a static LevelEnabler which returns
+// true for itself and all higher logging levels. For example WarnLevel.Enabled()
+// will return true for WarnLevel, ErrorLevel, DPanicLevel, PanicLevel, and
+// FatalLevel, but return false for InfoLevel and DebugLevel.
+type LevelEnabler interface {
+	Enabled(Level) bool
+}
+```
+
+```
+c1 := zapcore.NewCore(encoder, zapcore.AddSync(logF), zapcore.DebugLevel)
+// Level 实现了 LevelEnabler 接口 ，通过比较日志级别与设定级别的大小决定是否输出日志
+```
+
+```
+#zap/level.go
+
+// LevelEnablerFunc is a convenient way to implement zapcore.LevelEnabler with
+// an anonymous function.
+//
+// It's particularly useful when splitting log output between different
+// outputs (e.g., standard error and standard out). For sample code, see the
+// package-level AdvancedConfiguration example.
+type LevelEnablerFunc func(zapcore.Level) bool
+
+// Enabled calls the wrapped function.
+func (f LevelEnablerFunc) Enabled(lvl zapcore.Level) bool { return f(lvl) }
+
+```
+
+```
+highPriority := zap.LevelEnablerFunc(func(level zapcore.Level) bool {
+	return level >= zap.ErrorLevel
+})
+zapcore.NewCore(encoder, zapcore.NewMultiWriteSyncer(errorFileWriteSyncer, zapcore.AddSync(os.Stdout)), highPriority)
+// LevelEnablerFunc 实现了 LevelEnabler 接口 ，通过自定义规则决定是否输出日志
 ```
 
 #### Lumberjack日志切割归档
