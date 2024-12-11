@@ -1,12 +1,4 @@
-# Zap日志库
-
-#### 安装
-
-运行下面的命令安装zap
-
-`go get -u go.uber.org/zap`
-
-#### 配置
+# 配置
 
 Zap提供了两种类型的日志记录器—`Sugared Logger`和 `Logger`。
 
@@ -14,11 +6,11 @@ Zap提供了两种类型的日志记录器—`Sugared Logger`和 `Logger`。
 
 在每一微秒和每一次内存分配都很重要的上下文中，使用 `Logger`。它甚至比 `SugaredLogger`更快，内存分配次数也更少，但它只支持强类型的结构化日志记录。
 
-###### Logger
+### Logger
 
 通过调用 `zap.NewProduction()`/`zap.NewDevelopment()`或者 `zap.Example()`创建一个Logger。
 
-上面的每一个函数都将创建一个logger。唯一的区别在于它将记录的信息不同。例如production logger默认记录调用函数信息、日期和时间等。
+上面的每一个函数都将创建一个logger。唯一的区别在于它将记录的信息不同。例如`production logger`默认记录调用函数信息、日期和时间等。
 
 通过Logger调用Info/Error等。
 
@@ -63,53 +55,47 @@ func simpleHttpGet(url string) {
 
 每个 `zapcore.Field`其实就是一组键值对参数。
 
-###### Sugared Logger
+### Sugared Logger
 
 现在让我们使用Sugared Logger来实现相同的功能。
 
-大部分的实现基本都相同。
+我们通过调用主logger的 `. Sugar()`方法来获取一个 `SugaredLogger`。
 
-惟一的区别是，我们通过调用主logger的 `. Sugar()`方法来获取一个 `SugaredLogger`。
-
-然后使用 `SugaredLogger`以 `printf`格式记录语句
-
-下面是修改过后使用 `SugaredLogger`代替 `Logger`的代码：
+与 Logger 不同，SugaredLogger 并不坚持结构化日志记录。对于每个日志级别，它公开了四种方法：
 
 ```
-var sugarLogger *zap.SugaredLogger
-
-func main() {
-	InitLogger()
-	defer sugarLogger.Sync()
-	simpleHttpGet("www.google.com")
-	simpleHttpGet("http://www.google.com")
-}
-
-func InitLogger() {
-  logger, _ := zap.NewProduction()
-	sugarLogger = logger.Sugar()
-}
-
-func simpleHttpGet(url string) {
-	sugarLogger.Debugf("Trying to hit GET request for %s", url)
-	resp, err := http.Get(url)
-	if err != nil {
-		sugarLogger.Errorf("Error fetching URL %s : Error = %s", url, err)
-	} else {
-		sugarLogger.Infof("Success! statusCode = %s for URL %s", resp.Status, url)
-		resp.Body.Close()
-	}
-}
-
+以 log.Print 样式日志记录的日志级别命名的方法
+以“w”结尾的方法，用于松散类型的结构化日志记录
+以“f”结尾的方法用于 log.Printf 风格的日志记录
+以“ln”结尾的方法用于 log.Println 风格的日志记录
 ```
 
-你应该注意到的了，到目前为止这两个logger都打印输出JSON结构格式。
+例如，InfoLevel 的方法有：
 
-在本博客的后面部分，我们将更详细地讨论SugaredLogger，并了解如何进一步配置它。
+```
+Info(...any)           Print-style logging
+Infow(...any)          Structured logging (read as "info with")
+Infof(string, ...any)  Printf-style logging
+Infoln(...any)         Println-style logging
+```
 
-#### 定制logger
+```
+func (s *SugaredLogger) Info(args ...interface{})
+Info 在InfoLevel记录提供的参数。当两个参数都不是字符串时，会在参数之间添加空格。
 
-###### 日志写入文件
+func (s *SugaredLogger) Infof(template string, args ...interface{})
+Infof 根据格式说明符格式化消息并将其记录在InfoLevel中。
+
+func (s *SugaredLogger) Infoln(args ...interface{})
+Infoln 在InfoLevel记录一条消息。参数之间始终添加空格。v1.22.0中添加。
+
+func (s *SugaredLogger) Infow(msg string, keysAndValues ...interface{})
+Infow 记录一条带有一些附加上下文的消息。可变参数键值对的处理方式与 With 中的情况相同。
+```
+
+# 定制logger
+
+### 日志写入文件
 
 我们要做的第一个更改是把日志写入文件，而不是打印到应用程序控制台。
 
@@ -140,7 +126,7 @@ func InitLogger() {
 }
 ```
 
-###### Log Encoder
+### Log Encoder
 
 现在，我们希望将编码器从JSON Encoder更改为普通Encoder。为此，我们需要将 `NewJSONEncoder()`更改为 `NewConsoleEncoder()`
 
@@ -153,7 +139,7 @@ zapcore.NewConsoleEncoder 函数使用上述创建的生产环境配置来创建
 总的来说，通过这种方式创建的控制台编码器，能够在保证符合生产环境要求的前提下，将日志以合适的格式输出到控制台，方便开发者进行查看和分析。
 ```
 
-###### 更改时间编码
+### 更改时间编码
 
 鉴于我们对配置所做的更改，有下面两个问题：
 
@@ -205,13 +191,13 @@ cfg := zapcore.EncoderConfig{
 encoder := zapcore.NewConsoleEncoder(cfg)
 ```
 
-###### 添加调用者详细信息
+### 添加调用者详细信息
 
 添加将调用函数信息记录到日志中的功能，在 `zap.New(..)`函数中添加一个 `Option`
 
 `logger := zap.New(core, zap.AddCaller())   //哪里调用了logger`
 
-###### AddCallerSkip
+### AddCallerSkip
 
 `logger := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1))`
 
@@ -223,9 +209,9 @@ zap.AddCallerSkip(skip int) 用于在使用 Uber 的 Zap 日志库时，跳过�
 这样可以更准确地反映出业务代码中实际产生日志的位置，方便在查看日志时快速定位到相关的业务逻辑代码。但需要注意的是，过度使用 zap.AddCallerSkip 可能会导致难以追踪日志的真正来源，所以应该谨慎使用，并确保对其效果有清晰的理解
 ```
 
-#### 日志输出
+### 日志输出
 
-###### 日志输出到多个位置
+##### 日志输出到多个位置
 
 我们可以将日志同时输出到文件和终端
 
@@ -248,7 +234,7 @@ ws := io.MultiWriter(file, os.Stdout)
 core := zapcore.NewCore(encoder, zapcore.AddSync(ws), zapcore.DebugLevel)
 ```
 
-###### err日志单独输出
+##### err日志单独输出
 
 有时候我们除了将全量日志输出到 `xx.log`文件中之外，还希望将 `ERROR`级别的日志单独输出到一个名为 `xx.err.log`的日志文件中。我们可以通过以下方式实现
 
@@ -285,7 +271,7 @@ coreArr = append(coreArr, c2)
 logger := zap.New(zapcore.NewTee(coreArr...), zap.AddCaller())
 ```
 
-###### 自定义的日志输出
+##### 自定义的日志输出
 
 `LevelEnablerFunc` 是一个非常灵活且简便的方式，可以通过匿名函数根据日志级别来动态启用或禁用日志。它为在复杂的日志输出配置中根据级别控制日志的记录提供了非常方便的手段。
 
@@ -299,7 +285,7 @@ lowPriority := zap.LevelEnablerFunc(func(level zapcore.Level) bool {
 })
 ```
 
-###### 日志输出原码分析
+##### 日志输出原码分析
 
 ```
 #zap/zapcore/core.go
@@ -370,7 +356,7 @@ zapcore.NewCore(encoder, zapcore.NewMultiWriteSyncer(errorFileWriteSyncer, zapco
 // LevelEnablerFunc 实现了 LevelEnabler 接口 ，通过自定义规则决定是否输出日志
 ```
 
-#### Lumberjack日志切割归档
+# 日志切割归档
 
 这个日志程序中唯一缺少的就是日志切割归档功能。
 
@@ -393,11 +379,11 @@ l, _ := rotatelogs.New(
 zapcore.AddSync(l)
 ```
 
-###### 安装
+### 安装
 
 `go get gopkg.in/natefinch/lumberjack.v2`
 
-###### 加入Lumberjack
+### 运用
 
 ```
 Lumberjack Logger采用以下属性作为输入:
