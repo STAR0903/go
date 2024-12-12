@@ -663,12 +663,26 @@ bob data2 write : true
 ```ini
 [matchers]
 m = r.sub == p.sub && r.obj == p.obj && r.act == p.act
-Copy
 ```
 
 上述匹配器是最简单的，这意味着请求中的主题、对象和行动应该与政策规则中的匹配。
 
 您可以在匹配器中使用诸如 `+, -, *, /` 和逻辑操作员，例如 `&&, ||, !`
+
+```
+[matchers]
+m = r.sub == p.sub && (keyMatch2(r.obj, p.obj) || keyMatch(r.obj, p.obj)) && (r.act == p.act || p.act == "*")
+```
+
+| 功能          | 使用场景                                        | 匹配示例                         |
+| ------------- | ----------------------------------------------- | -------------------------------- |
+| `keyMatch`  | 适合简单的通配符场景，比如以某路径为前缀的规则  | `/api/*`匹配 `/api/user/123` |
+| `keyMatch2` | 适合精确的动态参数规则，比如 RESTful 风格的 API | `/user/:id`匹配 `/user/123`  |
+
+```
+/user/* 可以匹配 /user/123 和 /user/123/details，但不能匹配 /user
+/user/:id 可以匹配 /user/123，但不会匹配 /user/123/details
+```
 
 ### 多个班级类型
 
