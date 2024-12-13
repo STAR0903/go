@@ -256,7 +256,9 @@ Key: 'Example.Name' Error:Field validation for 'Name' failed on the 'is666' tag
 
 `validator`库本身是支持国际化的，借助相应的语言包可以实现校验错误提示信息的自动翻译。下面的示例代码演示了如何将错误提示信息翻译成中文，翻译成其他语言的方法类似。
 
-### 基础使用
+**存疑：两种方式暂且认为是相同功能的不同实现。**
+
+### 方式一
 
 ```
 import (
@@ -293,9 +295,12 @@ func InitValidate() {
 }
 ```
 
-### （存疑）不知道有什么影响
+```
+Validate = validator.New()
+从validator直接New一个实例
+```
 
-如果你想在程序的其他地方访问并修改验证引擎的行为，比如添加更多的验证规则，或者对验证行为进行自定义，那么你需要通过 `binding.Validator.Engine()` 来获取底层引擎并进行操作
+### 方式二
 
 ```
 import (
@@ -350,6 +355,7 @@ func InitTrans(locale string) (err error) {
 
 ```
 v, ok := binding.Validator.Engine().(*validator.Validate)
+gin框架集成validate
 ```
 
 # 美化错误提示信息
