@@ -281,8 +281,6 @@ MySQL 驱动程序提供了 [一些高级配置](https://github.com/go-gorm/mysq
 
 ### 创建表
 
-### AutoMigrate
-
 `func (db *DB) AutoMigrate(dst ...interface{}) error`
 
 ```
@@ -734,3 +732,188 @@ db.Unscoped().Where("age = 20").Find(&users)
 db.Unscoped().Delete(&order)
 // DELETE FROM orders WHERE id=10;
 ```
+
+# 关联
+
+### many2many
+
+##### 快速入门
+
+```
+type User struct {
+  gorm.Model
+  Languages []Language `gorm:"many2many:user_language"`
+}
+
+type Language struct {
+  gorm.Model
+  Name string
+}
+```
+
+```
+gorm:"many2many:user_language"
+创建user_language表，创建user记录的时候同时创建不存在的language记录，更新关系表
+```
+
+##### 相互嵌套
+
+在构造时，两个表相互嵌套的话，需要在每个嵌套字段后加上标签，不能单独在其中一个嵌套字段上加标签，另一个不加。
+
+创建的时候，创建其中一个表，另一个表与连接表，都会自动创建。
+
+```
+package main
+
+import (
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+)
+
+type Student struct {
+	gorm.Model
+	Name    string
+	Classes []Class `gorm:"many2many:student_class"`
+}
+
+type Class struct {
+	gorm.Model
+	Name     string
+	Students []Student `gorm:"many2many:student_class"`
+}
+
+func main() {
+	// 连接数据库
+	dsn := "root:123456@tcp(127.0.0.1:3306)/gorm?charset=utf8mb4&parseTime=True&loc=Local"
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		panic(err)
+	}
+	// 创建表
+	err = db.AutoMigrate(&Student{}, &Class{})
+	if err != nil {
+		panic(err)
+	}
+	// 通过创建学生，同时更新班级和关系表
+	db.Create(&Student{
+		Model: gorm.Model{ID: 1},
+		Name:  "微微",
+		Classes: []Class{
+			{
+				Model: gorm.Model{ID: 200},
+				Name:  "向日葵班",
+			},
+		},
+	})
+	// 通过创建班级，同时更新学生和关系表
+	db.Create(&Class{
+		Model: gorm.Model{ID: 201},
+		Name:  "玫瑰班",
+		Students: []Student{
+			{
+				Model: gorm.Model{ID: 2},
+				Name:  "欧欧",
+			},
+			{
+				Model: gorm.Model{ID: 3},
+				Name:  "小红",
+			},
+		},
+	})
+
+```
+
+classes 表
+
+![1734296739023](image/gorm/1734296739023.png)
+
+students 表
+
+![1734296745633](image/gorm/1734296745633.png)
+
+student - class 表
+
+![1734296751168](image/gorm/1734296751168.png)
+
+### 关联模式
+
+```
+type Class struct {
+	gorm.Model
+	Name     string
+	Students []Student gorm:"many2many:student_class"
+}
+```
+
+`Association("Students")` 内填充的字符串要与相关的字段名称 `Students` 一致。
+
+##### 查询
+
+```
+// 查询与某个班级有关的所有学生关联
+db.Model(&Class{Model: gorm.Model{ID: 201}}).Association("Students").Find(&s)
+// 查询与某个班级有关的符合条件的学生关联
+const code2 = 2
+db.Model(&Class{Model: gorm.Model{ID: 201}}).Where("student_id = ?", code2).
+Association("Students").Find(&s1)
+```
+
+```
+与201班有关的学生：
+欧欧
+小红
+与201班有关的ID为2的学生：
+欧欧
+```
+
+查询返回的是 students 表里面的完整的学生记录。
+
+##### 添加
+
+```
+db.Model(&class).Association("Students").Append(&s1, &s2, &s3)
+```
+
+```
+与202班有关的学生：
+萧萧
+帆帆
+天天
+```
+
+`Append()` 会在 students 表创建不存在的 student 记录，更新关系表。**此时班级必须已经存在**。
+
+##### 替换
+
+```
+db.Model(&class).Association("Students").Replace(&s0)
+```
+
+```
+与202班有关的学生：
+bb
+```
+
+`Replace()` 会删除 class 所有的关联记录，然后把指定的记录添加进去，如果需要保留某个记录可以放在指定记录里面。
+
+##### 删除
+
+```
+db.Model(&class).Association("Students").Delete(&s1)
+db.Model(&class).Association("Students").Clear()
+```
+
+```
+与200班有关的学生：
+微微
+萧萧
+帆帆
+天天
+与200班有关的学生：
+微微
+帆帆
+天天
+与200班有关的学生：
+```
+
+`Delete()` 和 `Clear()` 只会删除关系表里面的数据。
