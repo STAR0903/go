@@ -2,6 +2,8 @@
 
 [`cron`](https://link.segmentfault.com/?enc=NxJoGE84AH5XoP3WUUoxNw%3D%3D.krapOva%2Fl%2FJ%2BiLPBRL9LCXjfWhIM%2BTH4XhLZwMFsvhQ%3D)一个用于管理定时任务的库，用 Go 实现 Linux 中 `crontab`这个命令的效果。
 
+[学习更多](https://segmentfault.com/a/1190000023029219)：指定时区，自定义 `Logger`，Job 包装器......
+
 # 快速上手
 
 ```
@@ -197,9 +199,3 @@ func (c *Cron) AddFunc(spec string, cmd func()) (EntryID, error) {
   return c.AddJob(spec, FuncJob(cmd))
 }
 ```
-
-# 更多
-
-指定时区，自定义 `Logger`，Job 包装器......
-
-参考笔记：[学习更多](https://segmentfault.com/a/1190000023029219)
