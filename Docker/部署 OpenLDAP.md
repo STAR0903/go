@@ -4,7 +4,7 @@
 
 `docker pull osixia/openldap:latest `
 
-# **创建自定义网络**
+# 创建自定义网络
 
 首先，您需要创建一个自定义的 Docker 网络。运行以下命令：
 
